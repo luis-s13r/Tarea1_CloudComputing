@@ -1,123 +1,101 @@
+cat << 'EOF' > app.js
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
+const Database = require('better-sqlite3');
 const cors = require('cors');
 
 const app = express();
 const PORT = 3000;
 
-// Middlewares para procesar JSON, form-data y habilitar CORS
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Conexión / Creación de la base de datos SQLite
-const db = new sqlite3.Database('./students.sqlite', (err) => {
-  if (err) {
-    console.error('Error al conectar con SQLite:', err.message);
-  } else {
-    console.log('Base de datos SQLite (students.sqlite) conectada con éxito.');
-  }
-});
+// Conexión / Creación de la base de datos
+const db = new Database('./students.sqlite');
+console.log('Base de datos SQLite conectada con éxito.');
 
-// Inicialización de la tabla students
-db.run(`CREATE TABLE IF NOT EXISTS students (
+// Inicialización de la tabla
+db.prepare(`CREATE TABLE IF NOT EXISTS students (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   firstname TEXT NOT NULL,
   lastname TEXT NOT NULL,
   gender TEXT,
   age INTEGER
-)`);
+)`).run();
 
-// 1. GET /students - Obtener todos los estudiantes
+// 1. GET /students
 app.get('/students', (req, res) => {
-  const sql = 'SELECT * FROM students';
-  db.all(sql, [], (err, rows) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
+  try {
+    const rows = db.prepare('SELECT * FROM students').all();
     res.status(200).json(rows);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// 2. GET /student/:id - Obtener un estudiante por ID
+// 2. GET /student/:id
 app.get('/student/:id', (req, res) => {
-  const sql = 'SELECT * FROM students WHERE id = ?';
-  db.get(sql, [req.params.id], (err, row) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    if (!row) {
-      return res.status(404).json({ error: 'Estudiante no encontrado' });
-    }
+  try {
+    const row = db.prepare('SELECT * FROM students WHERE id = ?').get(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Estudiante no encontrado' });
     res.status(200).json(row);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// 3. POST /students - Crear un nuevo estudiante
+// 3. POST /students
 app.post('/students', (req, res) => {
   const { firstname, lastname, gender, age } = req.body;
-
   if (!firstname || !lastname) {
     return res.status(400).json({ error: 'Nombre y apellido son requeridos' });
   }
-
-  const sql = 'INSERT INTO students (firstname, lastname, gender, age) VALUES (?, ?, ?, ?)';
-  const params = [firstname, lastname, gender, age];
-
-  db.run(sql, params, function (err) {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    res.status(200).send(`Student with id: ${this.lastID} created successfully`);
-  });
+  try {
+    const stmt = db.prepare('INSERT INTO students (firstname, lastname, gender, age) VALUES (?, ?, ?, ?)');
+    const info = stmt.run(firstname, lastname, gender, age);
+    res.status(200).send(`Student with id: ${info.lastInsertRowid} created successfully`);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// 4. PUT /student/:id - Modificar un estudiante existente
+// 4. PUT /student/:id
 app.put('/student/:id', (req, res) => {
   const { firstname, lastname, gender, age } = req.body;
   const { id } = req.params;
+  try {
+    const current = db.prepare('SELECT * FROM students WHERE id = ?').get(id);
+    if (!current) return res.status(404).json({ error: 'Estudiante no encontrado' });
 
-  const sql = `UPDATE students SET 
-                firstname = COALESCE(?, firstname), 
-                lastname = COALESCE(?, lastname), 
-                gender = COALESCE(?, gender), 
-                age = COALESCE(?, age) 
-              WHERE id = ?`;
-  const params = [firstname, lastname, gender, age, id];
-
-  db.run(sql, params, function (err) {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    if (this.changes === 0) {
-      return res.status(404).json({ error: 'Estudiante no encontrado para actualizar' });
-    }
-
-    // Retorna el objeto actualizado
-    db.get('SELECT * FROM students WHERE id = ?', [id], (err, row) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.status(200).json(row);
-    });
-  });
+    db.prepare(`UPDATE students SET 
+      firstname = ?, lastname = ?, gender = ?, age = ? 
+      WHERE id = ?`).run(
+        firstname || current.firstname,
+        lastname || current.lastname,
+        gender || current.gender,
+        age || current.age,
+        id
+    );
+    const updated = db.prepare('SELECT * FROM students WHERE id = ?').get(id);
+    res.status(200).json(updated);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// 5. DELETE /student/:id - Eliminar un estudiante
+// 5. DELETE /student/:id
 app.delete('/student/:id', (req, res) => {
   const { id } = req.params;
-  const sql = 'DELETE FROM students WHERE id = ?';
-
-  db.run(sql, [id], function (err) {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    if (this.changes === 0) {
-      return res.status(404).json({ error: 'Estudiante no encontrado' });
-    }
+  try {
+    const info = db.prepare('DELETE FROM students WHERE id = ?').run(id);
+    if (info.changes === 0) return res.status(404).json({ error: 'Estudiante no encontrado' });
     res.status(200).send(`The Student with id: ${id} has been deleted.`);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// Escuchar en 0.0.0.0 para aceptar conexiones externas a la Máquina Virtual
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Servidor API REST Node.js corriendo en el puerto ${PORT}`);
 });
+EOF
