@@ -1,4 +1,3 @@
-cat << 'EOF' > app.js
 const express = require('express');
 const Database = require('better-sqlite3');
 const cors = require('cors');
@@ -98,4 +97,3 @@ app.delete('/student/:id', (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Servidor API REST Node.js corriendo en el puerto ${PORT}`);
 });
-EOF
